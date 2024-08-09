@@ -3,6 +3,7 @@ import numpy as np
 import pandas as pd
 from flask import Flask, request
 from flask_mysqldb import MySQL
+from decimal import Decimal
 
 app = Flask(__name__)
 
@@ -69,7 +70,7 @@ def train_model():
 
     theta = np.random.randn(X_train.shape[1])
     learning_rate = 0.01
-    iterations = 1000
+    iterations = 10
     momentum = 0.9
 
     def predict(X, theta):
@@ -132,19 +133,19 @@ def predict_completed_time(new_input_normalized, theta):
 def fetch_data_to_train_model():
     cur = mysql.connection.cursor()
     query = """
-    SELECT 
+        SELECT 
         u.year_experience,
         COUNT(CASE
             WHEN cli.is_checked = 1 THEN cli.id
         END) AS number_of_job_done,
-        AVG(CASE
-            WHEN cli.is_checked = 1 THEN cli.time_end - cli.time_start
-        END) AS time_done_average,
+        IFNULL(AVG(CASE
+            WHEN cli.is_checked = 1 THEN (cli.time_end - cli.time_start) / 3600000
+        END), 0) AS time_done_average,
         COUNT(CASE
             WHEN cli.job_done_on_time = 1 THEN cli.id
         END) AS total_of_job_done_on_time,
         COUNT(cli.id) AS total_of_job,
-        SUM(cli.job_score) AS completed_time_job
+        IFNULL(SUM((cli.time_end - cli.time_start) / 3600000), 0) AS completed_time_job
     FROM
         users u
             JOIN
@@ -155,14 +156,15 @@ def fetch_data_to_train_model():
         cli.deleted_at IS NULL
             AND cl.deleted_at IS NULL
             AND u.deleted_at IS NULL
-    GROUP BY u.id , u.year_experience;
+    GROUP BY u.id, u.year_experience;
     """
     cur.execute(query)
     results = cur.fetchall()
 
     cur.close()
 
-    df = pd.DataFrame(results)
+    df = pd.DataFrame(results,columns=['year_experience', 'number_of_job_done', 'time_done_average', 'total_of_job_done_on_time', 'total_of_job', 'completed_time_job'])
+    df = df.applymap(lambda x: float(x) if isinstance(x, Decimal) else x)
     return df
 
 
