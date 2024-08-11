@@ -1,9 +1,12 @@
 import flask
 import numpy as np
+import pandas
 import pandas as pd
 from flask import Flask, request
 from flask_mysqldb import MySQL
 from decimal import Decimal
+
+from matplotlib import pyplot as plt
 
 app = Flask(__name__)
 
@@ -23,23 +26,22 @@ def index():
 @app.route('/predict', methods=['POST'])
 def predict():
     data = request.get_json(force=True)
-    job_score = data['job_score']
-    year_experience = data['year_experience']
-    number_of_job_done = data['number_of_job_done']
-    time_done_average = data['time_done_average']
-    total_of_job_done_on_time = data['total_of_job_done_on_time']
-    total_of_job = data['total_of_job']
-
+    average_job_score = data['feature']['average_job_score']
+    year_experience = data['feature']['year_experience']
+    number_of_job_done = data['feature']['number_of_job_done']
+    time_done_average = data['feature']['time_done_average']
+    total_of_job_done_on_time = data['feature']['total_of_job_done_on_time']
+    total_of_job = data['feature']['total_of_job']
     try:
         theta, mean, std = train_model()
-        input = np.array([job_score, year_experience, number_of_job_done, time_done_average, total_of_job_done_on_time,
-                          total_of_job])
+        input = np.array([[average_job_score, year_experience, number_of_job_done, time_done_average, total_of_job_done_on_time,
+                          total_of_job]])
 
         new_input_normalized = (input - mean) / std
         new_input_normalized = np.c_[np.ones(new_input_normalized.shape[0]), new_input_normalized]
         completed_time = predict_completed_time(new_input_normalized, theta)
         return flask.jsonify({
-            'completed time': completed_time[0],
+            'completed_time': completed_time[0],
         })
     except Exception as e:
         return flask.jsonify({
@@ -70,7 +72,7 @@ def train_model():
 
     theta = np.random.randn(X_train.shape[1])
     learning_rate = 0.01
-    iterations = 10
+    iterations = 1000
     momentum = 0.9
 
     def predict(X, theta):
@@ -116,8 +118,13 @@ def train_model():
     print(f'Mean Squared Error: {mse}')
     print(f'R^2 Score: {r2}')
 
+    plt.figure(figsize=(10, 6))
+    plt.plot(range(iterations), cost_history, color='b')
+    plt.xlabel('Iterations')
+    plt.ylabel('Cost')
+    plt.title('Cost Function during Gradient Descent with Momentum')
+    plt.show()
     return theta, mean, std
-
 
 def normalize(X):
     mean = X.mean(axis=0)
@@ -139,13 +146,16 @@ def fetch_data_to_train_model():
             WHEN cli.is_checked = 1 THEN cli.id
         END) AS number_of_job_done,
         IFNULL(AVG(CASE
-            WHEN cli.is_checked = 1 THEN (cli.time_end - cli.time_start) / 3600000
-        END), 0) AS time_done_average,
+                    WHEN cli.is_checked = 1 THEN (cli.time_end - cli.time_start) / 3600000
+                END),
+                0) AS time_done_average,
         COUNT(CASE
             WHEN cli.job_done_on_time = 1 THEN cli.id
         END) AS total_of_job_done_on_time,
         COUNT(cli.id) AS total_of_job,
-        IFNULL(SUM((cli.time_end - cli.time_start) / 3600000), 0) AS completed_time_job
+        IFNULL(SUM((cli.time_end - cli.time_start) / 3600000),
+                0) AS completed_time_job,
+        IFNULL(AVG(cli.job_score), 0) AS average_job_score
     FROM
         users u
             JOIN
@@ -156,17 +166,18 @@ def fetch_data_to_train_model():
         cli.deleted_at IS NULL
             AND cl.deleted_at IS NULL
             AND u.deleted_at IS NULL
-    GROUP BY u.id, u.year_experience;
+    GROUP BY u.id , u.year_experience;
     """
     cur.execute(query)
     results = cur.fetchall()
 
     cur.close()
 
-    df = pd.DataFrame(results,columns=['year_experience', 'number_of_job_done', 'time_done_average', 'total_of_job_done_on_time', 'total_of_job', 'completed_time_job'])
+    df = pd.DataFrame(results,columns=['year_experience', 'number_of_job_done', 'time_done_average', 'total_of_job_done_on_time', 'total_of_job', 'completed_time_job','average_job_score'])
+    # df = pandas.read_csv('./job_data.csv')
     df = df.applymap(lambda x: float(x) if isinstance(x, Decimal) else x)
     return df
 
 
 if __name__ == '__main__':
-    app.run()
+    app.run(debug=True)
